@@ -7,9 +7,9 @@ import numpy as np
 
 from models import c11
 from src.attacks import pgd_rand
-from src.train import train_standard, train_pgd
-from src.train import train_bat_fgsm
-from src.evaluation import test_clean, test_adv
+from src.train import train_standard, train_pgd, train_fgsm
+from src.train import train_bat_fgsm, train_bat_pgd
+from src.evaluation import test_clean, test_adv, test_AutoAttack
 from src.args import get_args
 from src.utils_dataset import load_dataset
 from src.utils_log import metaLogger, rotateCheckpoint
@@ -19,13 +19,16 @@ import torch
 import torch.nn as nn
 from tqdm import trange
 
-def train(args, logger, X, y, model, opt, itr, device):
+def train(args, logger, X, y, model, opt, itr, model_k_list, device):
     """perform one epoch of training."""
     if args.method == "standard":
         train_log = train_standard(X, y, model, opt, device)
 
     elif args.method == "pgd":
         train_log = train_pgd(X, y, model, opt, device)
+
+    elif args.method == "fgsm":
+        train_log = train_fgsm(X, y, model, opt, device)
 
     elif args.method == "bat_fgsm":
         train_log = train_bat_fgsm(args.bat_k, 
@@ -34,7 +37,20 @@ def train(args, logger, X, y, model, opt, itr, device):
                                   itr, 
                                   X, 
                                   y, 
-                                  model, 
+                                  model,
+                                  model_k_list,
+                                  opt, 
+                                  device)
+
+    elif args.method == "bat_pgd":
+        train_log = train_bat_pgd(args.bat_k, 
+                                  args.bat_step, 
+                                  args.j_dir,
+                                  itr, 
+                                  X, 
+                                  y, 
+                                  model,
+                                  model_k_list,
                                   opt, 
                                   device)
 
@@ -63,6 +79,14 @@ def main():
     train_loader, test_loader = load_dataset(args.dataset, args.batch_size)
 
     model = get_model(args, device)
+
+    if "bat" in args.method:
+        if args.batch_size % args.bat_k != 0:
+            raise ValueError("mini-batch size must be divisible by bat_k!")
+
+    model_k_list = []
+    # print(len(model_list),model_list)
+
     opt, lr_scheduler = get_optim(model, args)
     ckpt_epoch = 0
     ckpt_itr = 0
@@ -77,6 +101,12 @@ def main():
         ckpt_itr = ckpt["itr"]
         if lr_scheduler:
             lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
+
+        if "bat" in args.method:
+            for i in range(args.bat_k):
+                model_k = get_model(args, device)
+                model_k_list.append(model_k)
+                model_k_list[i].load_state_dict(ckpt["model_k_list_state_dict"][i])
         print("LOADED CHECKPOINT")
 
 
@@ -87,7 +117,11 @@ def main():
         with trange(len(train_loader)) as t:
             for X, y in train_loader:
 
-                train_log = train(args, logger, X, y, model, opt, ckpt_itr, device)
+                if "bat" in args.method and X.shape[0] != args.batch_size:
+                    t.update()
+                    continue
+
+                train_log = train(args, logger, X, y, model, opt, ckpt_itr, model_k_list, device)
 
                 t.set_postfix(loss=train_log[1],
                               acc='{0:.2f}%'.format(train_log[0]*100))
@@ -95,22 +129,35 @@ def main():
 
                 ckpt_itr += 1
 
-                if "bat" in args.method:
-                    if ckpt_itr == 1 or (ckpt_itr-1) % (args.bat_step) == 0:
-                        torch.save(model.state_dict(), args.j_dir+"/model/model_"+str(ckpt_itr)+".pt")
+                # The following code is commented since we are now saving the model 
+                # in GPU directly. 
+                # if "bat" in args.method:
+                #     if ckpt_itr == 1 or (ckpt_itr-1) % (args.bat_step) == 0:
+                        
+                #         # torch.save(model.state_dict(), args.j_dir+"/model/model_"+str(ckpt_itr)+".pt")
 
-                        if ckpt_itr > (args.bat_k*args.bat_step):
-                            rotateCheckpoint(ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler)
-                            os.remove(args.j_dir+"/model/model_"+str(ckpt_itr-args.bat_k*args.bat_step)+".pt")
-                print(os.listdir(args.j_dir+"/model/"))
+                #         if ckpt_itr > (args.bat_k*args.bat_step):
+                #             rotateCheckpoint(ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler)
+                #             os.remove(args.j_dir+"/model/model_"+str(ckpt_itr-args.bat_k*args.bat_step)+".pt")
+                # print(os.listdir(args.j_dir+"/model/"))
+                if "bat" in args.method:
+                    if ckpt_itr <= args.bat_k*args.bat_step:
+                            if ckpt_itr == 1 or (ckpt_itr-1) % (args.bat_step) == 0:
+                                model_k_list.append(model)
+                                
+                    elif (ckpt_itr-1) % (args.bat_step) == 0:
+                        model_k_list.pop(0)
+                        model_k_list.append(model)
 
         test_log = test_clean(test_loader, model, device)
         adv_log = test_adv(test_loader, model, pgd_rand, attack_param, device)
+        AA_acc = test_AutoAttack(test_loader, model, 100, device)
 
         logger.add_scalar("pgd20/acc", adv_log[0], _epoch+1)
         logger.add_scalar("pgd20/loss", adv_log[1], _epoch+1)
         logger.add_scalar("test/acc", test_log[0], _epoch+1)
         logger.add_scalar("test/loss", test_log[1], _epoch+1)
+        logger.add_scalar("autoattack/acc", AA_acc, _epoch+1)
         logging.info(
             "Test set: Loss: {loss:.6f}\t"
             "Accuracy: {acc:.2f}".format(
@@ -126,7 +173,11 @@ def main():
             lr_scheduler.step()
 
         if (_epoch+1) % args.ckpt_freq == 0:
-            rotateCheckpoint(ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler)
+            rotateCheckpoint(args, ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler, model_k_list)
+
+        if (_epoch+1) == args.epoch:
+            AA_acc = test_AutoAttack(test_loader, model, 1000, device)
+            logger.add_scalar("autoattack/final_acc", AA_acc, _epoch+1)
 
         logger.save_log()
     logger.close()

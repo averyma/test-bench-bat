@@ -26,6 +26,8 @@ echo "#!/bin/bash
 #SBATCH --mem=$[8*$resource]GB
 #SBATCH --gres=gpu:${resource}
 #SBATCH --nodes=1
+#SBATCH --account=deadline
+#SBATCH --qos=deadline
 bash ${j_dir}/scripts/${j_name}.sh
 " > $j_dir/scripts/${j_name}.slrm
 
@@ -37,4 +39,4 @@ wandb login 9bc64f558f249643c1805ff63ac9c55f0ef649c4
 $cmd --j_dir ${j_dir} --j_id \$SLURM_JOB_ID
 " > $j_dir/scripts/${j_name}.sh
 
-sbatch $j_dir/scripts/${j_name}.slrm --qos deadline
+sbatch $j_dir/scripts/${j_name}.slrm

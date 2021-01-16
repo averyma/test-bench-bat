@@ -25,5 +25,5 @@ pgd_steps: 10
 enable_wandb: false
 
 # bat
-bat_k: 5
+bat_k: 4
 bat_step: 10

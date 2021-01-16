@@ -7,24 +7,30 @@ from torch.utils.tensorboard import SummaryWriter
 
 import wandb
 
-def rotateCheckpoint(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_scheduler):
+def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_scheduler, model_k_list):
     ckpt_curr = os.path.join(ckpt_dir, ckpt_name+"_curr.pth")
     ckpt_prev = os.path.join(ckpt_dir, ckpt_name+"_prev.pth")
 
     # no existing ckpt
     if not (os.path.exists(ckpt_curr) or os.path.exists(ckpt_prev)):
-        saveCheckpoint(ckpt_dir,
-                       ckpt_name+"_curr.pth",
-                       model,
-                       opt,
-                       epoch,
-                       ckpt_itr,
-                       lr_scheduler)
-
+        pass
     elif os.path.exists(ckpt_curr):
         # overwrite ckpt_prev with ckpt_curr
         cmd = "cp -r {} {}".format(ckpt_curr, ckpt_prev)
         os.system(cmd)
+
+    if "bat" in args.method:    
+        saveCheckpoint_bat(ckpt_dir,
+                           ckpt_name+"_curr.pth",
+                           model,
+                           opt,
+                           epoch,
+                           ckpt_itr,
+                           model_k_list,
+                           args.bat_k,
+                           lr_scheduler)
+
+    else:
         saveCheckpoint(ckpt_dir,
                        ckpt_name+"_curr.pth",
                        model,
@@ -46,6 +52,31 @@ def saveCheckpoint(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_schedule
                          "optimizer": opt.state_dict(),
                          "epoch": epoch+1,
                          "itr": ckpt_itr}, ckpt_dir, ckpt_name)
+
+    print("SAVED CHECKPOINT")
+
+def saveCheckpoint_bat(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, model_k_list, bat_k, lr_scheduler):
+    model_k_list_state_dict = []
+    for i in range(bat_k):
+        model_k_list_state_dict.append(model_k_list[i].state_dict()) 
+
+
+
+    if lr_scheduler:
+        checkpoint_save({"state_dict": model.state_dict(),
+                         "optimizer": opt.state_dict(),
+                         "epoch": epoch+1,
+                         "itr": ckpt_itr, 
+                         "lr_scheduler":lr_scheduler.state_dict(),
+                         "model_k_list_state_dict": model_k_list_state_dict},
+                        ckpt_dir, ckpt_name)
+    else:
+        checkpoint_save({"state_dict": model.state_dict(),
+                         "optimizer": opt.state_dict(),
+                         "epoch": epoch+1,
+                         "itr": ckpt_itr,
+                         "model_k_list_state_dict": model_k_list_state_dict},
+                        ckpt_dir, ckpt_name)
 
     print("SAVED CHECKPOINT")
 
