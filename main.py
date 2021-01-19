@@ -8,7 +8,7 @@ import numpy as np
 from models import c11
 from src.attacks import pgd_rand
 from src.train import train_standard, train_pgd, train_fgsm
-from src.train import train_bat_fgsm, train_bat_pgd
+from src.train import train_bat_fgsm, train_bat_pgd, train_ensemble_pgd
 from src.evaluation import test_clean, test_adv, test_AutoAttack
 from src.args import get_args
 from src.utils_dataset import load_dataset
@@ -26,6 +26,9 @@ def train(args, logger, X, y, model, opt, itr, model_k_list, device):
 
     elif args.method == "pgd":
         train_log = train_pgd(X, y, model, opt, device)
+
+    elif args.method == "ensemble_pgd":
+        train_log = train_ensemble_pgd(X, y, model_k_list, opt, device)
 
     elif args.method == "fgsm":
         train_log = train_fgsm(X, y, model, opt, device)
@@ -79,12 +82,20 @@ def main():
     train_loader, test_loader = load_dataset(args.dataset, args.batch_size)
 
     model = get_model(args, device)
+    model_k_list = []
 
     if "bat" in args.method:
         if args.batch_size % args.bat_k != 0:
             raise ValueError("mini-batch size must be divisible by bat_k!")
 
-    model_k_list = []
+    if "ensemble" in args.method:
+        model_1 = get_model(args, device)
+        model_2 = get_model(args, device)
+        model_k_list.append(model_1)
+        model_k_list.append(model_2)
+
+
+    
     # print(len(model_list),model_list)
 
     opt, lr_scheduler = get_optim(model, args)
@@ -99,14 +110,22 @@ def main():
         opt.load_state_dict(ckpt["optimizer"])
         ckpt_epoch = ckpt["epoch"]
         ckpt_itr = ckpt["itr"]
+
         if lr_scheduler:
             lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
 
-        if "bat" in args.method:
-            for i in range(args.bat_k):
+        if "bat" in args.method or "ensemble" in args.method:
+            model_k_list = []
+            for i in range(len(ckpt["model_k_list_state_dict"])):
                 model_k = get_model(args, device)
                 model_k_list.append(model_k)
                 model_k_list[i].load_state_dict(ckpt["model_k_list_state_dict"][i])
+
+        # if "ensemble" in args.method:
+        #     model_1.load_state_dict(ckpt["state_dict_1"])
+        #     model_2.load_state_dict(ckpt["state_dict_2"])
+        #     model_k_list = [model_1, model_2]
+
         print("LOADED CHECKPOINT")
 
 

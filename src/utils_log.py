@@ -19,7 +19,7 @@ def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_
         cmd = "cp -r {} {}".format(ckpt_curr, ckpt_prev)
         os.system(cmd)
 
-    if "bat" in args.method:    
+    if "bat" in args.method or "ensemble" in args.method:    
         saveCheckpoint_bat(ckpt_dir,
                            ckpt_name+"_curr.pth",
                            model,
@@ -29,7 +29,6 @@ def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_
                            model_k_list,
                            args.bat_k,
                            lr_scheduler)
-
     else:
         saveCheckpoint(ckpt_dir,
                        ckpt_name+"_curr.pth",
@@ -57,10 +56,10 @@ def saveCheckpoint(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_schedule
 
 def saveCheckpoint_bat(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, model_k_list, bat_k, lr_scheduler):
     model_k_list_state_dict = []
-    for i in range(bat_k):
+
+    # if len(model_k_list) != 0:
+    for i in range(len(model_k_list)):
         model_k_list_state_dict.append(model_k_list[i].state_dict()) 
-
-
 
     if lr_scheduler:
         checkpoint_save({"state_dict": model.state_dict(),
