@@ -25,9 +25,9 @@ lr=0.1
 # done
 
 
-momentum=0
-weight_decay=0
-for arch in "resnet34"; do
+# momentum=0
+# weight_decay=0
+for arch in "resnet8" "resnet34" "wideresnet"; do
 	for method in "ensemble_pgd"; do
 		bash launch_slurm_job.sh ${gpu} ${arch}_${method} 1 "python3 main.py --method \"${method}\" --arch \"${arch}\" --lr_update \"${lr_update}\"  --lr ${lr} --dataset \"cifar10\" --epoch ${epoch} --wandb_project \"${project}\" --enable_wandb ${enable_wandb}"
 	done

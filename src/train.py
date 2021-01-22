@@ -225,16 +225,16 @@ def train_ensemble_pgd(X, y, model_k_list, opt, device):
     yp_0 = model_k_list[0](X+delta)
     loss_0 = nn.CrossEntropyLoss()(yp_0, y)
 
-    opt.zero_grad()
+    opt[0].zero_grad()
     loss_0.backward()
-    opt.step()
+    opt[0].step()
 
     yp_1 = model_k_list[1](X+delta)
     loss_1 = nn.CrossEntropyLoss()(yp_1, y)
 
-    opt.zero_grad()
+    opt[1].zero_grad()
     loss_1.backward()
-    opt.step()
+    opt[1].step()
 
     batch_correct = (yp_0.argmax(dim=1) == y).sum().item()
     batch_acc = batch_correct / X.shape[0]

@@ -89,16 +89,19 @@ def main():
             raise ValueError("mini-batch size must be divisible by bat_k!")
 
     if "ensemble" in args.method:
+        model_0 = get_model(args, device)
         model_1 = get_model(args, device)
-        model_2 = get_model(args, device)
+        model_k_list.append(model_0)
         model_k_list.append(model_1)
-        model_k_list.append(model_2)
 
+    if "ensemble" in args.method:
+        opt_0, lr_scheduler_0 = get_optim(model, args)
+        opt_1, lr_scheduler_1 = get_optim(model, args)
+        opt = [opt_0, opt_1]
+        lr_scheduler = [lr_scheduler_0, lr_scheduler_1]
+    else:
+        opt, lr_scheduler = get_optim(model, args)
 
-    
-    # print(len(model_list),model_list)
-
-    opt, lr_scheduler = get_optim(model, args)
     ckpt_epoch = 0
     ckpt_itr = 0
     
@@ -107,12 +110,20 @@ def main():
     if os.path.exists(ckpt_location):
         ckpt = torch.load(ckpt_location)
         model.load_state_dict(ckpt["state_dict"])
-        opt.load_state_dict(ckpt["optimizer"])
         ckpt_epoch = ckpt["epoch"]
         ckpt_itr = ckpt["itr"]
 
-        if lr_scheduler:
-            lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
+        if "ensemble" in args.method:
+            opt[0].load_state_dict(ckpt["optimizer_0"])
+            opt[1].load_state_dict(ckpt["optimizer_1"])
+            if lr_scheduler:
+                lr_scheduler[0].load_state_dict(ckpt["lr_scheduler_0"])
+                lr_scheduler[1].load_state_dict(ckpt["lr_scheduler_1"])
+
+        else:
+            opt.load_state_dict(ckpt["optimizer"])
+            if lr_scheduler:
+                lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
 
         if "bat" in args.method or "ensemble" in args.method:
             model_k_list = []
@@ -120,11 +131,6 @@ def main():
                 model_k = get_model(args, device)
                 model_k_list.append(model_k)
                 model_k_list[i].load_state_dict(ckpt["model_k_list_state_dict"][i])
-
-        # if "ensemble" in args.method:
-        #     model_1.load_state_dict(ckpt["state_dict_1"])
-        #     model_2.load_state_dict(ckpt["state_dict_2"])
-        #     model_k_list = [model_1, model_2]
 
         print("LOADED CHECKPOINT")
 
@@ -189,7 +195,11 @@ def main():
                 acc=adv_log[0]))
 
         if lr_scheduler:
-            lr_scheduler.step()
+            if "ensemble" in args.method:
+                lr_scheduler[0].step()
+                lr_scheduler[1].step()
+            else:
+                lr_scheduler.step()
 
         if (_epoch+1) % args.ckpt_freq == 0:
             rotateCheckpoint(args, ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler, model_k_list)
