@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import wandb
 
-def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_scheduler, model_k_list):
+def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_scheduler, model_k_list, ckpt_max_robust_acc):
     ckpt_curr = os.path.join(ckpt_dir, ckpt_name+"_curr.pth")
     ckpt_prev = os.path.join(ckpt_dir, ckpt_name+"_prev.pth")
 
@@ -28,6 +28,7 @@ def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_
                            ckpt_itr,
                            model_k_list,
                            args.bat_k,
+                           ckpt_max_robust_acc,
                            lr_scheduler)
     elif "ensemble" in args.method:
         saveCheckpoint_ensemble(ckpt_dir,
@@ -38,6 +39,7 @@ def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_
                                ckpt_itr,
                                model_k_list,
                                args.bat_k,
+                               ckpt_max_robust_acc,
                                lr_scheduler)
     else:
         saveCheckpoint(ckpt_dir,
@@ -46,73 +48,84 @@ def rotateCheckpoint(args, ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_
                        opt,
                        epoch,
                        ckpt_itr,
+                       ckpt_max_robust_acc,
                        lr_scheduler)
 
-def saveCheckpoint(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, lr_scheduler):
-    if lr_scheduler:
-        checkpoint_save({"state_dict": model.state_dict(),
-                         "optimizer": opt.state_dict(),
-                         "epoch": epoch+1,
-                         "itr": ckpt_itr, 
-                         "lr_scheduler":lr_scheduler.state_dict()},
-                        ckpt_dir, ckpt_name)
-    else:
-        checkpoint_save({"state_dict": model.state_dict(),
-                         "optimizer": opt.state_dict(),
-                         "epoch": epoch+1,
-                         "itr": ckpt_itr}, ckpt_dir, ckpt_name)
+def saveCheckpoint(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, ckpt_max_robust_acc, lr_scheduler):
+    
+    lr_state_dict = lr_scheduler.state_dict() if lr_scheduler else []
+
+    # if lr_scheduler:
+    checkpoint_save({"state_dict": model.state_dict(),
+                     "optimizer": opt.state_dict(),
+                     "epoch": epoch+1,
+                     "itr": ckpt_itr, 
+                     "lr_scheduler": lr_state_dict,
+                     "max_robust_acc": ckpt_max_robust_acc},
+                    ckpt_dir, ckpt_name)
+    # else:
+    #     checkpoint_save({"state_dict": model.state_dict(),
+    #                      "optimizer": opt.state_dict(),
+    #                      "epoch": epoch+1,
+    #                      "itr": ckpt_itr}, ckpt_dir, ckpt_name)
 
     print("SAVED CHECKPOINT")
 
-def saveCheckpoint_bat(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, model_k_list, bat_k, lr_scheduler):
+def saveCheckpoint_bat(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, model_k_list, bat_k, ckpt_max_robust_acc, lr_scheduler):
     model_k_list_state_dict = []
+    lr_state_dict = lr_scheduler.state_dict() if lr_scheduler else []
 
     # if len(model_k_list) != 0:
     for i in range(len(model_k_list)):
         model_k_list_state_dict.append(model_k_list[i].state_dict()) 
 
-    if lr_scheduler:
-        checkpoint_save({"state_dict": model.state_dict(),
-                         "optimizer": opt.state_dict(),
-                         "epoch": epoch+1,
-                         "itr": ckpt_itr, 
-                         "lr_scheduler":lr_scheduler.state_dict(),
-                         "model_k_list_state_dict": model_k_list_state_dict},
-                        ckpt_dir, ckpt_name)
-    else:
-        checkpoint_save({"state_dict": model.state_dict(),
-                         "optimizer": opt.state_dict(),
-                         "epoch": epoch+1,
-                         "itr": ckpt_itr,
-                         "model_k_list_state_dict": model_k_list_state_dict},
-                        ckpt_dir, ckpt_name)
+    # if lr_scheduler:
+    checkpoint_save({"state_dict": model.state_dict(),
+                     "optimizer": opt.state_dict(),
+                     "epoch": epoch+1,
+                     "itr": ckpt_itr, 
+                     "lr_scheduler": lr_state_dict,
+                     "model_k_list_state_dict": model_k_list_state_dict,
+                     "max_robust_acc": ckpt_max_robust_acc},
+                    ckpt_dir, ckpt_name)
+    # else:
+    #     checkpoint_save({"state_dict": model.state_dict(),
+    #                      "optimizer": opt.state_dict(),
+    #                      "epoch": epoch+1,
+    #                      "itr": ckpt_itr,
+    #                      "model_k_list_state_dict": model_k_list_state_dict,
+    #                      "max_robust_acc": ckpt_max_robust_acc},
+    #                     ckpt_dir, ckpt_name)
 
     print("SAVED CHECKPOINT")
 
-def saveCheckpoint_ensemble(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, model_k_list, bat_k, lr_scheduler):
+def saveCheckpoint_ensemble(ckpt_dir, ckpt_name, model, opt, epoch, ckpt_itr, model_k_list, bat_k, ckpt_max_robust_acc, lr_scheduler):
     model_k_list_state_dict = []
+    lr_state_dict = [lr_scheduler[0].state_dict(), lr_scheduler[1].state_dict()] if lr_scheduler[0] else []
 
     for i in range(len(model_k_list)):
         model_k_list_state_dict.append(model_k_list[i].state_dict()) 
 
-    if lr_scheduler:
-        checkpoint_save({"state_dict": model.state_dict(),
-                         "optimizer_0": opt[0].state_dict(),
-                         "optimizer_1": opt[1].state_dict(),
-                         "epoch": epoch+1,
-                         "itr": ckpt_itr, 
-                         "lr_scheduler_0":lr_scheduler[0].state_dict(),
-                         "lr_scheduler_1":lr_scheduler[1].state_dict(),
-                         "model_k_list_state_dict": model_k_list_state_dict},
-                        ckpt_dir, ckpt_name)
-    else:
-        checkpoint_save({"state_dict": model.state_dict(),
-                         "optimizer_0": opt[0].state_dict(),
-                         "optimizer_1": opt[1].state_dict(),
-                         "epoch": epoch+1,
-                         "itr": ckpt_itr,
-                         "model_k_list_state_dict": model_k_list_state_dict},
-                        ckpt_dir, ckpt_name)
+    # if lr_scheduler:
+    checkpoint_save({"state_dict": model.state_dict(),
+                     "optimizer_0": opt[0].state_dict(),
+                     "optimizer_1": opt[1].state_dict(),
+                     "epoch": epoch+1,
+                     "itr": ckpt_itr, 
+                     "lr_scheduler_0": lr_state_dict[0],
+                     "lr_scheduler_1": lr_state_dict[1],
+                     "model_k_list_state_dict": model_k_list_state_dict,
+                     "max_robust_acc": ckpt_max_robust_acc},
+                    ckpt_dir, ckpt_name)
+    # else:
+    #     checkpoint_save({"state_dict": model.state_dict(),
+    #                      "optimizer_0": opt[0].state_dict(),
+    #                      "optimizer_1": opt[1].state_dict(),
+    #                      "epoch": epoch+1,
+    #                      "itr": ckpt_itr,
+    #                      "model_k_list_state_dict": model_k_list_state_dict,
+    #                      "max_robust_acc": ckpt_max_robust_acc},
+    #                     ckpt_dir, ckpt_name)
 
     print("SAVED CHECKPOINT")
 
@@ -164,7 +177,7 @@ class metaLogger(object):
 
     def add_scalar(self, name, val, step):
         self.writer.add_scalar(name, val, step)
-        self.log_dict[name] += [(time.time(), int(step), float(val))]
+        # self.log_dict[name] += [(time.time(), int(step), float(val))]
         try:
             self.log_dict[name] += [(time.time(), int(step), float(val))]
         except KeyError:

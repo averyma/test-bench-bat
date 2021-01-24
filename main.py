@@ -84,26 +84,27 @@ def main():
     model = get_model(args, device)
     model_k_list = []
 
-    if "bat" in args.method:
-        if args.batch_size % args.bat_k != 0:
-            raise ValueError("mini-batch size must be divisible by bat_k!")
+    if "bat" in args.method and args.batch_size % args.bat_k != 0:
+        # if args.batch_size % args.bat_k != 0:
+        raise ValueError("mini-batch size must be divisible by bat_k!")
 
     if "ensemble" in args.method:
-        model_0 = get_model(args, device)
-        model_1 = get_model(args, device)
+        model_0, model_1 = get_model(args, device), get_model(args, device)
+        # model_1 = get_model(args, device)
         model_k_list.append(model_0)
         model_k_list.append(model_1)
 
-    if "ensemble" in args.method:
-        opt_0, lr_scheduler_0 = get_optim(model, args)
-        opt_1, lr_scheduler_1 = get_optim(model, args)
-        opt = [opt_0, opt_1]
-        lr_scheduler = [lr_scheduler_0, lr_scheduler_1]
+    # if "ensemble" in args.method:
+        opt_0, lr_scheduler_0 = get_optim(model_k_list[0], args)
+        opt_1, lr_scheduler_1 = get_optim(model_k_list[1], args)
+        opt, lr_scheduler = [opt_0, opt_1], [lr_scheduler_0, lr_scheduler_1]
+        # lr_scheduler = [lr_scheduler_0, lr_scheduler_1]
     else:
         opt, lr_scheduler = get_optim(model, args)
 
     ckpt_epoch = 0
     ckpt_itr = 0
+    ckpt_max_robust_acc = 0
     
     ckpt_dir = args.j_dir+"/"+str(args.j_id)+"/"
     ckpt_location = os.path.join(ckpt_dir, "custome_ckpt_"+logger.ckpt_status+".pth")
@@ -112,6 +113,7 @@ def main():
         model.load_state_dict(ckpt["state_dict"])
         ckpt_epoch = ckpt["epoch"]
         ckpt_itr = ckpt["itr"]
+        ckpt_max_robust_acc = ckpt["max_robust_acc"]
 
         if "ensemble" in args.method:
             opt[0].load_state_dict(ckpt["optimizer_0"])
@@ -119,7 +121,6 @@ def main():
             if lr_scheduler:
                 lr_scheduler[0].load_state_dict(ckpt["lr_scheduler_0"])
                 lr_scheduler[1].load_state_dict(ckpt["lr_scheduler_1"])
-
         else:
             opt.load_state_dict(ckpt["optimizer"])
             if lr_scheduler:
@@ -174,23 +175,33 @@ def main():
                         model_k_list.pop(0)
                         model_k_list.append(model)
 
-        test_log = test_clean(test_loader, model, device)
-        adv_log = test_adv(test_loader, model, pgd_rand, attack_param, device)
-        AA_acc = test_AutoAttack(test_loader, model, 100, device)
+        if "ensemble" in args.method:
+            test_log = test_clean(test_loader, model_k_list[0], device)
+            adv_log = test_adv(test_loader, model_k_list[0], pgd_rand, attack_param, device)
+            AA_acc = test_AutoAttack(test_loader, model_k_list[0], 100, device)
+        else:
+            test_log = test_clean(test_loader, model, device)
+            adv_log = test_adv(test_loader, model, pgd_rand, attack_param, device)
+            AA_acc = test_AutoAttack(test_loader, model, 100, device)
+
+        ckpt_max_robust_acc = adv_log[0] if adv_log[0] > ckpt_max_robust_acc else ckpt_max_robust_acc
 
         logger.add_scalar("pgd20/acc", adv_log[0], _epoch+1)
         logger.add_scalar("pgd20/loss", adv_log[1], _epoch+1)
         logger.add_scalar("test/acc", test_log[0], _epoch+1)
         logger.add_scalar("test/loss", test_log[1], _epoch+1)
         logger.add_scalar("autoattack/acc", AA_acc, _epoch+1)
+        logger.add_scalar("max_pgd20/acc", ckpt_max_robust_acc, _epoch+1)
         logging.info(
+            "Epoch: [{0}]\t"
             "Test set: Loss: {loss:.6f}\t"
-            "Accuracy: {acc:.2f}".format(
+            "Accuracy: {acc:.2f}%".format(
+                _epoch+1,
                 loss=test_log[1],
                 acc=test_log[0]))
         logging.info(
             "PGD20: Loss: {loss:.6f}\t"
-            "Accuracy: {acc:.2f}".format(
+            "Accuracy: {acc:.2f}%".format(
                 loss=adv_log[1],
                 acc=adv_log[0]))
 
@@ -202,11 +213,21 @@ def main():
                 lr_scheduler.step()
 
         if (_epoch+1) % args.ckpt_freq == 0:
-            rotateCheckpoint(args, ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler, model_k_list)
+            rotateCheckpoint(args, 
+                             ckpt_dir, 
+                             "custome_ckpt", 
+                             model, 
+                             opt, 
+                             _epoch, 
+                             ckpt_itr, 
+                             lr_scheduler, 
+                             model_k_list, 
+                             ckpt_max_robust_acc)
 
         if (_epoch+1) == args.epoch:
             AA_acc = test_AutoAttack(test_loader, model, 1000, device)
             logger.add_scalar("autoattack/final_acc", AA_acc, _epoch+1)
+
 
         logger.save_log()
     logger.close()
