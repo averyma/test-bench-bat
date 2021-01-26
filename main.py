@@ -8,7 +8,9 @@ import numpy as np
 from models import c11
 from src.attacks import pgd_rand
 from src.train import train_standard, train_pgd, train_fgsm
-from src.train import train_bat_fgsm, train_bat_pgd, train_ensemble_pgd
+from src.train import train_bat_fgsm, train_bat_pgd
+from src.train import train_ensemble_pgd, train_ensemble_pgd_fgsm
+from src.train import train_ensemble_pgd_trades, train_ensemble_pgd_standard
 from src.evaluation import test_clean, test_adv, test_AutoAttack
 from src.args import get_args
 from src.utils_dataset import load_dataset
@@ -29,6 +31,18 @@ def train(args, logger, X, y, model, opt, itr, model_k_list, device):
 
     elif args.method == "ensemble_pgd":
         train_log = train_ensemble_pgd(X, y, model_k_list, opt, device)
+
+    elif args.method == "ensemble_pgd_optim_v1" or args.method == "ensemble_pgd_optim_v2":
+        train_log = train_ensemble_pgd(X, y, model_k_list, opt, device)
+
+    elif args.method == "ensemble_pgd_fgsm":
+        train_log = train_ensemble_pgd_fgsm(X, y, model_k_list, opt, device)
+
+    elif args.method == "ensemble_pgd_trades":
+        train_log = train_ensemble_pgd_trades(X, y, model_k_list, opt, device)
+
+    elif args.method == "ensemble_pgd_standard":
+        train_log = train_ensemble_pgd_standard(X, y, model_k_list, opt, device)
 
     elif args.method == "fgsm":
         train_log = train_fgsm(X, y, model, opt, device)
@@ -94,9 +108,39 @@ def main():
         model_k_list.append(model_0)
         model_k_list.append(model_1)
 
-    # if "ensemble" in args.method:
-        opt_0, lr_scheduler_0 = get_optim(model_k_list[0], args)
-        opt_1, lr_scheduler_1 = get_optim(model_k_list[1], args)
+        if args.method == "ensemble_pgd_optim_v1":
+
+            opt_0 = torch.optim.SGD(model_k_list[0].parameters(), 
+                                    lr = args.lr, 
+                                    momentum = args.momentum, 
+                                    weight_decay = args.weight_decay)
+
+            opt_1 = torch.optim.Adam(model_k_list[1].parameters(), lr = args.lr)
+
+            if args.lr_update == "multistep":
+                _milestones = [args.epoch/ 2, args.epoch * 3 / 4]
+                lr_scheduler_0 = torch.optim.lr_scheduler.MultiStepLR(opt_0, milestones=_milestones, gamma=0.1)
+                lr_scheduler_1 = torch.optim.lr_scheduler.MultiStepLR(opt_1, milestones=_milestones, gamma=0.1)
+            elif args.lr_update == "fixed":
+                lr_scheduler = False
+
+        elif args.method == "ensemble_pgd_optim_v2":
+            opt_1 = torch.optim.SGD(model_k_list[1].parameters(), 
+                                    lr = args.lr, 
+                                    momentum = args.momentum, 
+                                    weight_decay = args.weight_decay)
+
+            opt_0 = torch.optim.Adam(model_k_list[0].parameters(), lr = args.lr)
+
+            if args.lr_update == "multistep":
+                _milestones = [args.epoch/ 2, args.epoch * 3 / 4]
+                lr_scheduler_0 = torch.optim.lr_scheduler.MultiStepLR(opt_0, milestones=_milestones, gamma=0.1)
+                lr_scheduler_1 = torch.optim.lr_scheduler.MultiStepLR(opt_1, milestones=_milestones, gamma=0.1)
+            elif args.lr_update == "fixed":
+                lr_scheduler = False
+        else:
+            opt_0, lr_scheduler_0 = get_optim(model_k_list[0], args)
+            opt_1, lr_scheduler_1 = get_optim(model_k_list[1], args)
         opt, lr_scheduler = [opt_0, opt_1], [lr_scheduler_0, lr_scheduler_1]
         # lr_scheduler = [lr_scheduler_0, lr_scheduler_1]
     else:
@@ -176,13 +220,28 @@ def main():
                         model_k_list.append(model)
 
         if "ensemble" in args.method:
-            test_log = test_clean(test_loader, model_k_list[0], device)
-            adv_log = test_adv(test_loader, model_k_list[0], pgd_rand, attack_param, device)
-            AA_acc = test_AutoAttack(test_loader, model_k_list[0], 100, device)
+            adv_log_0 = test_adv(test_loader, model_k_list[0], pgd_rand, attack_param, device)
+            adv_log_1 = test_adv(test_loader, model_k_list[1], pgd_rand, attack_param, device)
+            eval_model_after_one_epoch = model_k_list[0] if adv_log_0[0] > adv_log_1[0] else model_k_list[1]
+            adv_log = adv_log_0 if adv_log_0[0] > adv_log_1[0] else adv_log_1
+
         else:
-            test_log = test_clean(test_loader, model, device)
-            adv_log = test_adv(test_loader, model, pgd_rand, attack_param, device)
-            AA_acc = test_AutoAttack(test_loader, model, 100, device)
+            eval_model_after_one_epoch = model
+            adv_log = test_adv(test_loader, eval_model_after_one_epoch, pgd_rand, attack_param, device)
+            
+        test_log = test_clean(test_loader, eval_model_after_one_epoch, device)
+        AA_acc = test_AutoAttack(test_loader, eval_model_after_one_epoch, 100, device)
+
+        # eval_model_after_one_epoch = model_k_list[0] if "ensemble" in args.method else model
+
+        # if "ensemble" in args.method:
+        #     test_log = test_clean(test_loader, eval_model_after_one_epoch, device)
+        #     adv_log_0 = test_adv(test_loader, eval_model_after_one_epoch, pgd_rand, attack_param, device)
+        #     AA_acc_0 = test_AutoAttack(test_loader, eval_model_after_one_epoch, 100, device)
+        # else:
+        #     test_log = test_clean(test_loader, eval_model_after_one_epoch, device)
+        #     adv_log = test_adv(test_loader, eval_model_after_one_epoch, pgd_rand, attack_param, device)
+        #     AA_acc = test_AutoAttack(test_loader, eval_model_after_one_epoch, 100, device)
 
         ckpt_max_robust_acc = adv_log[0] if adv_log[0] > ckpt_max_robust_acc else ckpt_max_robust_acc
 
@@ -225,7 +284,10 @@ def main():
                              ckpt_max_robust_acc)
 
         if (_epoch+1) == args.epoch:
-            AA_acc = test_AutoAttack(test_loader, model, 1000, device)
+            # if "ensemble" in args.method:
+            #     AA_acc = test_AutoAttack(test_loader, model_k_list[0], 1000, device)
+            # else:
+            AA_acc = test_AutoAttack(test_loader, eval_model_after_one_epoch, 1000, device)
             logger.add_scalar("autoattack/final_acc", AA_acc, _epoch+1)
 
 

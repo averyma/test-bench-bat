@@ -10,6 +10,7 @@ import numpy as np
 from src.attacks import pgd_rand, fgsm
 from src.context import ctx_noparamgrad_and_eval
 from src.utils_general import ep2itr
+from src.trades import trades_adv
 
 def data_init(init, X, y, model):
     if init == "rand":
@@ -200,14 +201,6 @@ def train_ensemble_pgd(X, y, model_k_list, opt, device):
         X, y = X.to(device), y.to(device)
     bs_half = int(batch_size/2)
 
-    # X_0, y_0 = X[:bs_half,:,:,:], y[:bs_half]
-    # X_1, y_1 = X[-bs_half:,:,:,:], y[-bs_half:]
-
-    # # sanity check
-    # if len(X_0) != bs_half or len(X_1) != batch_size/2:
-    #     print(len(X_0), len(X_1))
-    #     ValueError("size wrong...")
-
     attack = pgd_rand
     param = {'ord': np.inf,
              'epsilon': 8./255.,
@@ -230,6 +223,164 @@ def train_ensemble_pgd(X, y, model_k_list, opt, device):
     opt[0].step()
 
     yp_1 = model_k_list[1](X+delta)
+    loss_1 = nn.CrossEntropyLoss()(yp_1, y)
+
+    opt[1].zero_grad()
+    loss_1.backward()
+    opt[1].step()
+
+    batch_correct = (yp_0.argmax(dim=1) == y).sum().item()
+    batch_acc = batch_correct / X.shape[0]
+
+    return batch_acc, loss_0.item()
+
+def train_ensemble_pgd_standard(X, y, model_k_list, opt, device):
+
+    model_k_list[0].train()
+    model_k_list[1].train()
+    
+
+    #check if size x is even
+    batch_size = len(X)
+    if batch_size % 2 != 0:
+        print("batch size is odd number, drop the first input to make it even!")
+        X, y = X[1:,:,:,:].to(device), y[1:].to(device)
+        batch_size -= 1
+    else:
+        X, y = X.to(device), y.to(device)
+    bs_half = int(batch_size/2)
+
+    attack = pgd_rand
+    param = {'ord': np.inf,
+             'epsilon': 8./255.,
+             'alpha': 2./255.,
+             'num_iter': 10,
+             'restarts': 1}
+
+    with ctx_noparamgrad_and_eval(model_k_list[0]):
+        delta_0 = attack(**param).generate(model_k_list[0], X[:bs_half,:,:,:], y[:bs_half])
+    with ctx_noparamgrad_and_eval(model_k_list[1]):
+        delta_1 = attack(**param).generate(model_k_list[1], X[-bs_half:,:,:,:], y[-bs_half:])
+
+    delta = torch.cat([delta_0, delta_1], dim = 0)
+
+    yp_0 = model_k_list[0](X)
+    loss_0 = nn.CrossEntropyLoss()(yp_0, y)
+
+    opt[0].zero_grad()
+    loss_0.backward()
+    opt[0].step()
+
+    yp_1 = model_k_list[1](X+delta)
+    loss_1 = nn.CrossEntropyLoss()(yp_1, y)
+
+    opt[1].zero_grad()
+    loss_1.backward()
+    opt[1].step()
+
+    batch_correct = (yp_1.argmax(dim=1) == y).sum().item()
+    batch_acc = batch_correct / X.shape[0]
+
+    return batch_acc, loss_1.item()
+
+def train_ensemble_pgd_fgsm(X, y, model_k_list, opt, device):
+
+    model_k_list[0].train()
+    model_k_list[1].train()
+    
+
+    #check if size x is even
+    batch_size = len(X)
+    if batch_size % 2 != 0:
+        print("batch size is odd number, drop the first input to make it even!")
+        X, y = X[1:,:,:,:].to(device), y[1:].to(device)
+        batch_size -= 1
+    else:
+        X, y = X.to(device), y.to(device)
+    bs_half = int(batch_size/2)
+
+    attack_0 = pgd_rand
+    param_0 = {'ord': np.inf,
+             'epsilon': 8./255.,
+             'alpha': 2./255.,
+             'num_iter': 10,
+             'restarts': 1}
+
+    attack_1 = fgsm
+    param_1 = {'ord': np.inf,
+             'epsilon': 8./255.}
+
+    with ctx_noparamgrad_and_eval(model_k_list[0]):
+        delta_0 = attack_0(**param_0).generate(model_k_list[0], X[:bs_half,:,:,:], y[:bs_half])
+    with ctx_noparamgrad_and_eval(model_k_list[1]):
+        delta_1 = attack_1(**param_1).generate(model_k_list[1], X[-bs_half:,:,:,:], y[-bs_half:])
+
+    delta = torch.cat([delta_0, delta_1], dim = 0)
+
+    yp_0 = model_k_list[0](X+delta)
+    loss_0 = nn.CrossEntropyLoss()(yp_0, y)
+
+    opt[0].zero_grad()
+    loss_0.backward()
+    opt[0].step()
+
+    yp_1 = model_k_list[1](X+delta)
+    loss_1 = nn.CrossEntropyLoss()(yp_1, y)
+
+    opt[1].zero_grad()
+    loss_1.backward()
+    opt[1].step()
+
+    batch_correct = (yp_0.argmax(dim=1) == y).sum().item()
+    batch_acc = batch_correct / X.shape[0]
+
+    return batch_acc, loss_0.item()
+
+def train_ensemble_pgd_trades(X, y, model_k_list, opt, device):
+
+    model_k_list[0].train()
+    model_k_list[1].train()
+    
+
+    #check if size x is even
+    batch_size = len(X)
+    if batch_size % 2 != 0:
+        print("batch size is odd number, drop the first input to make it even!")
+        X, y = X[1:,:,:,:].to(device), y[1:].to(device)
+        batch_size -= 1
+    else:
+        X, y = X.to(device), y.to(device)
+    bs_half = int(batch_size/2)
+
+    attack_0 = pgd_rand
+    param_0 = {'ord': np.inf,
+             'epsilon': 8./255.,
+             'alpha': 2./255.,
+             'num_iter': 10,
+             'restarts': 1}
+
+    with ctx_noparamgrad_and_eval(model_k_list[0]):
+        delta_0 = attack_0(**param_0).generate(model_k_list[0], X[:bs_half,:,:,:], y[:bs_half])
+
+    X_delta_0 = X[:bs_half,:,:,:] + delta_0
+    
+    X_delta_1 = trades_adv(model=model_k_list[1],
+                       x_natural=X[-bs_half:,:,:,:],
+                       step_size=0.007,
+                       epsilon=0.031,
+                       perturb_steps=10,
+                       distance='l_inf')
+
+    X_delta = torch.cat([X_delta_0, X_delta_1], dim = 0)
+
+    yp_0 = model_k_list[0](X_delta)
+    loss_0 = nn.CrossEntropyLoss()(yp_0, y)
+
+    opt[0].zero_grad()
+    loss_0.backward()
+    opt[0].step()
+
+    yp_1 = model_k_list[1](X_delta)
     loss_1 = nn.CrossEntropyLoss()(yp_1, y)
 
     opt[1].zero_grad()
