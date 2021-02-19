@@ -8,6 +8,7 @@ import torch.nn as nn
 import numpy as np
 import torch.optim as optim
 from models import c11, ResNet18, ResNet8, c12, ResNet34, WideResNet
+from models import ResNet8_mm, ResNet34_mm
 from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets, transforms
 from torch.autograd import grad
@@ -34,6 +35,10 @@ def get_model(argu, device):
         model = ResNet8()
     elif argu.arch == "resnet34":
         model = ResNet34()
+    elif argu.arch == "resnet8_mm":
+        model = ResNet8_mm()
+    elif argu.arch == "resnet34_mm":
+        model = ResNet34_mm()
     elif argu.arch == "c12":
         model = c12()
     elif argu.arch == "wideresnet":

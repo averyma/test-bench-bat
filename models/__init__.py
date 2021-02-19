@@ -1,5 +1,6 @@
 from .vgg import *
 from .resnet import *
+from .resnet_mm import *
 from .preact_resnet import *
 from .resnet_elu import *
 from .resnext import *

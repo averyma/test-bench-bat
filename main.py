@@ -1,13 +1,15 @@
 import os
 import sys
 import logging
+import copy
 
 import torch
 import numpy as np
+from tqdm import trange
 
-from models import c11
 from src.attacks import pgd_rand
 from src.train import train_standard, train_pgd, train_fgsm
+from src.train import train_pgd_BN
 from src.train import train_bat_fgsm, train_bat_pgd
 from src.train import train_ensemble_pgd, train_ensemble_pgd_fgsm
 from src.train import train_ensemble_pgd_trades, train_ensemble_pgd_standard
@@ -17,14 +19,13 @@ from src.utils_dataset import load_dataset
 from src.utils_log import metaLogger, rotateCheckpoint
 from src.utils_general import seed_everything, get_model, get_optim
 
-import torch
-import torch.nn as nn
-from tqdm import trange
-
 def train(args, logger, X, y, model, opt, itr, model_k_list, device):
     """perform one epoch of training."""
     if args.method == "standard":
         train_log = train_standard(X, y, model, opt, device)
+
+    elif args.method == "pgd_BN":
+        train_log = train_pgd_BN(X, y, model, opt, device)
 
     elif args.method == "pgd":
         train_log = train_pgd(X, y, model, opt, device)
@@ -47,7 +48,7 @@ def train(args, logger, X, y, model, opt, itr, model_k_list, device):
     elif args.method == "fgsm":
         train_log = train_fgsm(X, y, model, opt, device)
 
-    elif args.method == "bat_fgsm":
+    elif args.method == "bat_fgsm" or args.method == "bat_exp_fgsm":
         train_log = train_bat_fgsm(args.bat_k, 
                                   args.bat_step, 
                                   args.j_dir,
@@ -59,7 +60,7 @@ def train(args, logger, X, y, model, opt, itr, model_k_list, device):
                                   opt, 
                                   device)
 
-    elif args.method == "bat_pgd":
+    elif args.method == "bat_pgd" or args.method == "bat_exp_pgd":
         train_log = train_bat_pgd(args.bat_k, 
                                   args.bat_step, 
                                   args.j_dir,
@@ -80,7 +81,6 @@ def train(args, logger, X, y, model, opt, itr, model_k_list, device):
     return train_log
 
 def main():
-
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     attack_param = {"ord":np.inf, "epsilon": 8./255., "alpha":2./255., "num_iter": 20, "restart": 1}
@@ -98,9 +98,8 @@ def main():
     model = get_model(args, device)
     model_k_list = []
 
-    if "bat" in args.method and args.batch_size % args.bat_k != 0:
-        # if args.batch_size % args.bat_k != 0:
-        raise ValueError("mini-batch size must be divisible by bat_k!")
+    if "bat" in args.method and args.batch_size % (args.bat_k+1) != 0:
+        raise ValueError("mini-batch size must be divisible by bat_k+1!")
 
     if "ensemble" in args.method:
         model_0, model_1 = get_model(args, device), get_model(args, device)
@@ -110,9 +109,9 @@ def main():
 
         if args.method == "ensemble_pgd_optim_v1":
 
-            opt_0 = torch.optim.SGD(model_k_list[0].parameters(), 
-                                    lr = args.lr, 
-                                    momentum = args.momentum, 
+            opt_0 = torch.optim.SGD(model_k_list[0].parameters(),
+                                    lr = args.lr,
+                                    momentum = args.momentum,
                                     weight_decay = args.weight_decay)
 
             opt_1 = torch.optim.Adam(model_k_list[1].parameters(), lr = args.lr)
@@ -125,9 +124,9 @@ def main():
                 lr_scheduler = False
 
         elif args.method == "ensemble_pgd_optim_v2":
-            opt_1 = torch.optim.SGD(model_k_list[1].parameters(), 
-                                    lr = args.lr, 
-                                    momentum = args.momentum, 
+            opt_1 = torch.optim.SGD(model_k_list[1].parameters(),
+                                    lr = args.lr,
+                                    momentum = args.momentum,
                                     weight_decay = args.weight_decay)
 
             opt_0 = torch.optim.Adam(model_k_list[0].parameters(), lr = args.lr)
@@ -149,7 +148,7 @@ def main():
     ckpt_epoch = 0
     ckpt_itr = 0
     ckpt_max_robust_acc = 0
-    
+ 
     ckpt_dir = args.j_dir+"/"+str(args.j_id)+"/"
     ckpt_location = os.path.join(ckpt_dir, "custome_ckpt_"+logger.ckpt_status+".pth")
     if os.path.exists(ckpt_location):
@@ -178,8 +177,6 @@ def main():
                 model_k_list[i].load_state_dict(ckpt["model_k_list_state_dict"][i])
 
         print("LOADED CHECKPOINT")
-
-
 
     for _epoch in range(ckpt_epoch, args.epoch):
         # train_log = train(args, _epoch, logger, train_loader, model, opt, device)
@@ -210,14 +207,56 @@ def main():
                 #             rotateCheckpoint(ckpt_dir, "custome_ckpt", model, opt, _epoch, ckpt_itr, lr_scheduler)
                 #             os.remove(args.j_dir+"/model/model_"+str(ckpt_itr-args.bat_k*args.bat_step)+".pt")
                 # print(os.listdir(args.j_dir+"/model/"))
-                if "bat" in args.method:
-                    if ckpt_itr <= args.bat_k*args.bat_step:
-                            if ckpt_itr == 1 or (ckpt_itr-1) % (args.bat_step) == 0:
-                                model_k_list.append(model)
+
+#                 if "bat" in args.method and (ckpt_itr-1) % args.bat_step == 0:
+#                     # We save models in memory every bat_step iterations
+#                     # model_k_list.append(model)
+                    
+#                     if "exp" in args.method and len(model_k_list) >= 2:
+#                         # modify model_k_list[-1] with model_k_list[-2] for exponential averaging
+
+#                         model_to_append = model
+#                         len_model_param = len(list(model.parameters()))
+#                         decay_factor = 0.9
+#                         for i in range(len_model_param):
+#                             # exp avg calculated using: model_k_list[-1] and model_k_list[-2]
+#                             model_to_append = 
+                            
+#                             list(model_k_list[-1].parameters())[i].data*(1-decay_factor) +
+#                                               list(model.parameters())[i].data*(decay_factor)
                                 
-                    elif (ckpt_itr-1) % (args.bat_step) == 0:
+#                             # list(model_k_list[-1].parameters())[i].data.mul_(1-decay_factor).addcmul_(
+#                             # list(model_k_list[-1].parameters())[i].data, torch.tensor(1.), value=decay_factor)
+                            
+#                         model_k_list.append(model_to_append)
+#                     else:
+#                         model_k_list.append(model)
+
+#                     if len(model_k_list) == args.bat_k+2:
+#                         model_k_list.pop(0)
+
+                if "bat" in args.method and (ckpt_itr-1) % args.bat_step == 0:
+                    # We save models in memory every bat_step iterations
+                    model_k_list.append(copy.deepcopy(model))
+                    
+                    if "exp" in args.method and len(model_k_list) >= 2:
+                        # modify model_k_list[-1] with model_k_list[-2] for exponential averaging
+                        len_model_param = len(list(model.parameters()))
+                        decay_factor = 0.9
+                        for i in range(len_model_param):
+                            # exp avg calculated using: model_k_list[-1] and model_k_list[-2]
+                            # Note: model_k_list[-1] == model; model_k_list[-2] is the previous snapshot
+                            list(model_k_list[-1].parameters())[i].data.mul_(1-decay_factor).addcmul_(
+                            list(model_k_list[-2].parameters())[i].data, torch.tensor(1.), value=decay_factor)
+                    
+                    if "mm" in args.arch:
+                        # modifying the last FC in _mm arch:
+                        # 1. making bias 0; 2. making weight matrix I.
+                        list(model_k_list[-1].parameters())[-1].data.mul_(0)
+                        list(model_k_list[-1].parameters())[-2].data = torch.eye(10, device = device)
+                        
+                    if len(model_k_list) == args.bat_k+2:
                         model_k_list.pop(0)
-                        model_k_list.append(model)
 
         if "ensemble" in args.method:
             adv_log_0 = test_adv(test_loader, model_k_list[0], pgd_rand, attack_param, device)
@@ -243,14 +282,18 @@ def main():
         #     adv_log = test_adv(test_loader, eval_model_after_one_epoch, pgd_rand, attack_param, device)
         #     AA_acc = test_AutoAttack(test_loader, eval_model_after_one_epoch, 100, device)
 
-        ckpt_max_robust_acc = adv_log[0] if adv_log[0] > ckpt_max_robust_acc else ckpt_max_robust_acc
+        # ckpt_max_robust_acc = adv_log[0] if adv_log[0] > ckpt_max_robust_acc else ckpt_max_robust_acc
+
+        if adv_log[0] > ckpt_max_robust_acc:
+            ckpt_max_robust_acc = adv_log[0]
+            torch.save(eval_model_after_one_epoch.state_dict(), args.j_dir+"/model/best_model.pt")
 
         logger.add_scalar("pgd20/acc", adv_log[0], _epoch+1)
         logger.add_scalar("pgd20/loss", adv_log[1], _epoch+1)
         logger.add_scalar("test/acc", test_log[0], _epoch+1)
         logger.add_scalar("test/loss", test_log[1], _epoch+1)
-        logger.add_scalar("autoattack/acc", AA_acc, _epoch+1)
         logger.add_scalar("max_pgd20/acc", ckpt_max_robust_acc, _epoch+1)
+        logger.add_scalar("autoattack/acc", AA_acc, _epoch+1)
         logging.info(
             "Epoch: [{0}]\t"
             "Test set: Loss: {loss:.6f}\t"
@@ -272,24 +315,27 @@ def main():
                 lr_scheduler.step()
 
         if (_epoch+1) % args.ckpt_freq == 0:
-            rotateCheckpoint(args, 
-                             ckpt_dir, 
-                             "custome_ckpt", 
-                             model, 
-                             opt, 
-                             _epoch, 
-                             ckpt_itr, 
-                             lr_scheduler, 
-                             model_k_list, 
+            rotateCheckpoint(args,
+                             ckpt_dir,
+                             "custome_ckpt",
+                             model,
+                             opt,
+                             _epoch,
+                             ckpt_itr,
+                             lr_scheduler,
+                             model_k_list,
                              ckpt_max_robust_acc)
 
         if (_epoch+1) == args.epoch:
-            # if "ensemble" in args.method:
-            #     AA_acc = test_AutoAttack(test_loader, model_k_list[0], 1000, device)
-            # else:
-            AA_acc = test_AutoAttack(test_loader, eval_model_after_one_epoch, 1000, device)
-            logger.add_scalar("autoattack/final_acc", AA_acc, _epoch+1)
+            # Final evaluation based on "/model/best_model.pt" which has the highest pgd20 accuracy
+            best_model_path = args.j_dir+"/model/best_model.pt"
+            best_model = get_model(args, device)
+            best_model.load_state_dict(torch.load(best_model_path, map_location=device))
 
+            AA_acc = test_AutoAttack(test_loader, best_model, len(test_loader), device)
+            test_log = test_clean(test_loader, best_model, device)
+            logger.add_scalar("autoattack/final_acc", AA_acc, _epoch+1)
+            logger.add_scalar("test/final_acc", test_log[0], _epoch+1)
 
         logger.save_log()
     logger.close()

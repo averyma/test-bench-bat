@@ -30,8 +30,6 @@ def data_init(init, X, y, model):
     return delta
 
 def bat_init(init, X, y, bat_k, bat_step, j_dir, itr, model, model_k_list, device):
-    model_path = j_dir + "/model/"
-
     if init == "fgsm": 
         attack = fgsm
         param = {'ord': np.inf,
@@ -45,7 +43,7 @@ def bat_init(init, X, y, bat_k, bat_step, j_dir, itr, model, model_k_list, devic
                  'restarts': 1}
 
 
-    if itr < bat_k*bat_step:
+    if itr <= bat_k*bat_step:
         with ctx_noparamgrad_and_eval(model):
             delta = attack(**param).generate(model, X, y)
             X_bat = X + delta
@@ -61,28 +59,24 @@ def bat_init(init, X, y, bat_k, bat_step, j_dir, itr, model, model_k_list, devic
     # curr_k = len(curr_model_list)
     # bat_k = curr_k if curr_k < bat_k else bat_k
     # bat_len = int(X.shape[0] // bat_k * bat_k)
-    bat_len_per_k = int(X.shape[0]/bat_k)
-    X_bat = torch.zeros_like(X, device = device)
+    bat_len_per_k = int(X.shape[0]/(bat_k+1)) # +1 to include the current model
+    X_bat = torch.zeros_like(X, device=device)
     # y_bat = y[:bat_len]
 
-    for i in range(bat_k):
+    for i in range(bat_k+1):
 
         # model_k_path = model_path + curr_model_list[i]
         # model_k = copy.deepcopy(model)
         # model_k.load_state_dict(torch.load(model_k_path, map_location=device))
         # model_k.to(device)
-        model_k = model_k_list[i]
+        model_k = model if i == bat_k else model_k_list[i]
+
         with ctx_noparamgrad_and_eval(model_k):
-            X_attack = X[i*bat_len_per_k : (i+1)*bat_len_per_k,:,:,:]
+            X_attack = X[i*bat_len_per_k : (i+1)*bat_len_per_k, :, :, :]
             y_attack = y[i*bat_len_per_k : (i+1)*bat_len_per_k]
-
-            # fgsm_v1.1
-            # X_attack = X[0 : bat_len_per_k,:,:,:]
-            # y_attack = y[0 : bat_len_per_k]
-
             delta = attack(**param).generate(model_k, X_attack, y_attack)
 
-        X_bat[i*bat_len_per_k : (i+1)*bat_len_per_k,:,:,:] = X[i*bat_len_per_k : (i+1)*bat_len_per_k,:,:,:] + delta
+        X_bat[i*bat_len_per_k:(i+1)*bat_len_per_k,:,:,:] = X[i*bat_len_per_k:(i+1)*bat_len_per_k,:,:,:] + delta
 
     return X_bat, y
 
@@ -127,6 +121,31 @@ def train_standard(X, y, model, opt, device):
     X, y = X.to(device), y.to(device)
 
     yp = model(X)
+    loss = nn.CrossEntropyLoss()(yp, y)
+
+    opt.zero_grad()
+    loss.backward()
+    opt.step()
+
+    batch_correct = (yp.argmax(dim=1) == y).sum().item()
+    batch_acc = batch_correct / X.shape[0]
+
+    return batch_acc, loss.item()
+
+def train_pgd_BN(X, y, model, opt, device):
+    model.train()
+    X, y = X.to(device), y.to(device)
+
+    attack = pgd_rand
+    param = {'ord': np.inf,
+             'epsilon': 8./255.,
+             'alpha': 2./255.,
+             'num_iter': 10,
+             'restarts': 1}
+    # with ctx_noparamgrad_and_eval(model):
+    delta = attack(**param).generate(model, X, y)
+
+    yp = model(X+delta)
     loss = nn.CrossEntropyLoss()(yp, y)
 
     opt.zero_grad()
@@ -186,7 +205,6 @@ def train_fgsm(X, y, model, opt, device):
     return batch_acc, loss.item()
 
 def train_ensemble_pgd(X, y, model_k_list, opt, device):
-
     model_k_list[0].train()
     model_k_list[1].train()
     
@@ -235,7 +253,6 @@ def train_ensemble_pgd(X, y, model_k_list, opt, device):
     return batch_acc, loss_0.item()
 
 def train_ensemble_pgd_standard(X, y, model_k_list, opt, device):
-
     model_k_list[0].train()
     model_k_list[1].train()
     
@@ -284,7 +301,6 @@ def train_ensemble_pgd_standard(X, y, model_k_list, opt, device):
     return batch_acc, loss_1.item()
 
 def train_ensemble_pgd_fgsm(X, y, model_k_list, opt, device):
-
     model_k_list[0].train()
     model_k_list[1].train()
     
@@ -337,7 +353,6 @@ def train_ensemble_pgd_fgsm(X, y, model_k_list, opt, device):
     return batch_acc, loss_0.item()
 
 def train_ensemble_pgd_trades(X, y, model_k_list, opt, device):
-
     model_k_list[0].train()
     model_k_list[1].train()
     

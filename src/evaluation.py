@@ -39,7 +39,6 @@ def test_adv(loader, model, attack, param, device):
     return test_acc, test_loss
 
 def test_AutoAttack(loader, model, size, device):
-
     adversary = AutoAttack(model, norm='Linf', eps=8./255., version='standard')
 
 
@@ -49,8 +48,12 @@ def test_AutoAttack(loader, model, size, device):
     y_test = torch.cat(l, 0)
 
     # adversary = AutoAttack(model, norm='Linf', eps= 0.3, version='standard')
-    adv_complete, acc = adversary.run_standard_evaluation(x_test[:int(size)], y_test[:int(size)], bs= int(size/2))
-    
+    if size != len(loader):
+        adv_complete, acc = adversary.run_standard_evaluation(x_test[:int(size)],
+                                                              y_test[:int(size)], bs=int(size/2))
+    else:
+        adv_complete, acc = adversary.run_standard_evaluation(x_test, y_test, bs=128)
+
     return acc*100
 
 def test_transfer_adv(loader, transferred_model, attacked_model, attack, param, device):

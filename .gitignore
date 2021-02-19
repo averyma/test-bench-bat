@@ -1,3 +1,4 @@
+/notebook/
 /data/
 /exp/
 /pretrained/
@@ -5,3 +6,7 @@
 ._.DS_Store
 src/__pycache__/
 models/__pycache/
+.ipynb_checkpoints/
+models/.ipynb_checkpoints/
+models/__pycache__/
+src/.ipynb_checkpoints/
